@@ -62,5 +62,5 @@ features:
   - "minute_cos"
   - "anglez_sin"
   - "anglez_cos"
-  - "days_sin",
-  - "days_cos",
+  - "days_sin"
+  - "days_cos"
