@@ -6,6 +6,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class SelfAttention(nn.Module):
+    def __init__(self, in_channels):
+        super(SelfAttention, self).__init__()
+        self.query_conv = nn.Conv1d(in_channels, in_channels // 8, kernel_size=1)
+        self.key_conv = nn.Conv1d(in_channels, in_channels // 8, kernel_size=1)
+        self.value_conv = nn.Conv1d(in_channels, in_channels, kernel_size=1)
+        self.scale = torch.sqrt(torch.tensor(in_channels // 8, dtype=torch.float32))
+
+    def forward(self, x):
+        query = self.query_conv(x)
+        key = self.key_conv(x)
+        value = self.value_conv(x)
+
+        attention = torch.bmm(query.permute(0, 2, 1), key)
+        attention = F.softmax(attention / self.scale, dim=-1)
+        out = torch.bmm(value, attention.permute(0, 2, 1))
+        out = out + x  # Skip connection
+        return out
+    
 
 class SEModule(nn.Module):
     def __init__(self, channel, reduction=8):
@@ -40,7 +59,9 @@ class DoubleConv(nn.Module):
         norm=nn.BatchNorm1d,
         se=False,
         res=False,
+        attention=False,
     ):
+        super().__init__()
         super().__init__()
         self.res = res
         if not mid_channels:
@@ -57,12 +78,17 @@ class DoubleConv(nn.Module):
             norm(out_channels),
             non_linearity,
         )
+        self.attention = attention
+        if attention:
+            self.attention_layer = SelfAttention(out_channels)
 
     def forward(self, x):
+        x = self.double_conv(x)
         if self.res:
-            return x + self.double_conv(x)
-        else:
-            return self.double_conv(x)
+            x = x + self.double_conv(x)
+        if self.attention:
+            x = self.attention_layer(x)
+        return x
 
 
 class Down(nn.Module):
@@ -178,9 +204,11 @@ class UNet1DDecoder(nn.Module):
         )
 
         self.cls = nn.Sequential(
-            nn.Conv1d(64, 64, kernel_size=3, padding=1),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv1d(64, self.n_classes, kernel_size=1, padding=0),
+            nn.Conv1d(128, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(64, n_classes, kernel_size=1, padding=0),
             nn.Dropout(dropout),
         )
         self.loss_fn = nn.BCEWithLogitsLoss()
